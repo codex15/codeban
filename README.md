@@ -1,30 +1,35 @@
-# Brute
+# Brute 🔐
 
-Brute is a powerful yet lightweight SSH brute-force tool written in Go. It is designed to provide a flexible and efficient way to perform brute-force attacks on SSH servers.
+Welcome to Brute, your trusty sidekick in the world of SSH exploration. This robust and stealthy tool empowers you to navigate the digital realm with finesse.
 
-## Features
+## ⚙️ Features
 
-- **Concurrency**: Execute multiple login attempts concurrently, making the brute-force process faster.
-- **Customizable Commands**: Define custom commands to execute upon successful login, tailoring the tool to your specific needs.
-- **Colorful Output**: Color-coded console output for improved readability, providing a clear distinction between successful and unsuccessful attempts.
+- **Blazing Speed**: Execute lightning-fast login attempts concurrently, leaving sluggish servers in the dust.
+- **Custom Commands**: Craft your personalized commands to unleash havoc upon successful infiltrations.
+- **Chromatic Symphony**: Revel in the colorful console output, where victories and defeats are vividly painted.
 
-## Usage
+## 🚀 Usage
 
-To run Brute, use the following command:
+Fire up Brute with the command:
 
 ```bash
-go run test2.go <userpass file> <custom command> <ip list file> <port> <threads>
-<userpass file>: Path to a file containing username:password pairs.
-<custom command>: Custom command to execute upon successful login.
-<ip list file>: Path to a file containing a list of target IPs.
-<port>: Target SSH port for connection.
-<threads>: Number of concurrent threads to use.
-Installation
-Clone the repository:
+go run brute.go <userpass file> <custom command> <ip list file> <port> <threads>
+<userpass file>: The treasure trove of username:password pairs.
+<custom command>: Your secret weapon, a custom command to deploy upon victorious conquest.
+<ip list file>: A map of target IPs to conquer.
+<port>: The gate to infiltrate, the SSH port.
+<threads>: The legion of threads to lead into battle.
+
+🛠️ Installation
+Clone the Lair:
 git clone https://github.com/codex15/codeban.git
 cd codeban
-Run the program:
+Summon the Spirits:
 go run brute.go <userpass file> <custom command> <ip list file> <port> <threads>
-Contributing
-We welcome contributions! Feel free to open issues for bug reports or new features. Pull requests are also highly appreciated.
+🎭 Contributing
+Join our clandestine society! Open issues for bug bounties or propose enhancements. Contribute your craft through pull requests.
+📜 License
+Brute is licensed under the MIT License. Hack responsibly.
+
+Feel free to modify any part of the content according to your preferences. Remember, the goal is to inject a bit of personality into the document while maintaining clarity.
 
