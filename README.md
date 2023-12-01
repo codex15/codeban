@@ -11,7 +11,7 @@ Welcome to Brute, your trusty sidekick in the world of SSH exploration. This rob
 ## 🚀 Usage
 
 - Fire up Brute with the command:
-
+- ```bash
 go run brute.go <userpass file> <custom command> <ip list file> <port> <threads> [-S <IP segment>] [-P <ports file>]
 <userpass file>: The treasure trove of username:password pairs.
 <custom command>: Your secret weapon, a custom command to deploy upon victorious conquest.
@@ -19,7 +19,7 @@ go run brute.go <userpass file> <custom command> <ip list file> <port> <threads>
 <port>: The gate to infiltrate, the SSH port.
 <threads>: The legion of threads to lead into battle.
 [-S <IP segment>]: Optional. Specify an IP segment in CIDR notation to filter target IPs.
-[-P <ports file>]: Optional. Provide a file containing a list of ports.
+
 🛠️ Installation
 
 - Clone the Lair:
