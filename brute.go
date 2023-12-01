@@ -217,9 +217,11 @@ func checkVPS(userpassFile, command, ipListFile string, ports []string, threads 
 					semaphore <- struct{}{}
 					wg.Add(1)
 					go func(user, pass, command, ip, port string, wg *sync.WaitGroup) {
-						defer wg.Done()
+						defer func() {
+							wg.Done()
+							<-semaphore
+						}()
 						checkConnectionForIP(user, pass, command, ip, port, wg)
-						<-semaphore
 					}(user, pass, command, ip, port, &wg)
 				}
 			}
