@@ -28,7 +28,7 @@ git clone https://github.com/codex15/codeban.git
 cd codeban
 
 - Summon the Spirits:
-go run brute.go <userpass file> <custom command> <ip list file> <port> <threads> [-S <IP segment>] [-P <ports file>]
+go run brute.go <userpass file> <custom command> <ip list file> <port> <threads> [-S <IP segment>] 
 
 🎭 Contributing
 
