@@ -45,7 +45,7 @@ func NewCustomError(message string) *CustomError {
 	return &CustomError{Message: message}
 }
 
-
+// CIDRFlag is a custom type to hold CIDR notation for IP filtering
 type CIDRFlag struct {
 	CIDR string
 }
@@ -227,7 +227,7 @@ func checkVPS(userpassFile, command, ipListFile string, ports []string, threads 
 	// Wait for all goroutines to finish
 	wg.Wait()
 
-
+	// Display the colored completion message
 	fmt.Println("\n\033[01;34m[\033[01;31m      -- Finished --     \033[01;34m]\033[0m")
 }
 
@@ -294,9 +294,12 @@ func handleError(err error) {
 }
 
 func main() {
+	// Usage message with information about the -S and -P options
 	usage := "Usage: ./brute <userpass file> <custom command> <ip list file> <threads> [-S <IP segment>] [-P <ports file>]"
 
 	// Parse command line arguments
+	flag.StringVar(&ipSegmentFlag.CIDR, "S", "", "IP segment in CIDR notation (optional)")
+	flag.Var(&portFlag, "P", "File containing ports or a single port (optional)")
 	flag.Parse()
 
 	// Check if the number of arguments is correct
@@ -305,7 +308,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	
+	// Extract command line arguments
 	userpassFile := flag.Arg(0)
 	command := flag.Arg(1)
 	ipListFile := flag.Arg(2)
@@ -315,9 +318,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	
+	// Parse the IP segment provided with the -S option
 	if ipSegmentFlag.CIDR != "" {
-		
+		// Use ipSegmentFlag.CIDR directly
 		_, ipNet, err := net.ParseCIDR(ipSegmentFlag.CIDR)
 		if err != nil {
 			handleError(NewCustomError("Invalid IP segment format"))
@@ -326,6 +329,11 @@ func main() {
 		allowedIPRange = ipNet
 	}
 
-	
+	// If -P flag is not provided, use a default port or allow setting it from cmdline
+	if portFlag.PortsFile == "" {
+		portFlag.Ports = []string{"22"} // Default port is 22, change as needed
+	}
+
+	// Perform the VPS check with the specified parameters
 	checkVPS(userpassFile, command, ipListFile, portFlag.Ports, threads)
 }
