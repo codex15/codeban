@@ -130,7 +130,7 @@ func isNoLogin(err error) bool {
 	return false
 }
 
-func checkConnectionForIP(user, pass, command, ip, port string, wg *sync.WaitGroup) {
+func checkConnectionForIP(user, pass, command, ip, port string, wg *sync.WaitGroup, semaphore chan struct{}) {
 	defer wg.Done()
 
 	logFile, err := os.OpenFile("debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -216,13 +216,13 @@ func checkVPS(userpassFile, command, ipListFile string, ports []string, threads 
 				for _, port := range ports {
 					semaphore <- struct{}{}
 					wg.Add(1)
-					go func(user, pass, command, ip, port string, wg *sync.WaitGroup) {
+					go func(user, pass, command, ip, port string, wg *sync.WaitGroup, semaphore chan struct{}) {
 						defer func() {
 							wg.Done()
 							<-semaphore
 						}()
-						checkConnectionForIP(user, pass, command, ip, port, wg)
-					}(user, pass, command, ip, port, &wg)
+						checkConnectionForIP(user, pass, command, ip, port, wg, semaphore)
+					}(user, pass, command, ip, port, &wg, semaphore)
 				}
 			}
 		} else {
@@ -231,9 +231,11 @@ func checkVPS(userpassFile, command, ipListFile string, ports []string, threads 
 		}
 	}
 
-	wg.Wait()
-
-	fmt.Println("\n\033[01;34m[\033[01;31m      -- Finished --     \033[01;34m]\033[0m")
+	go func() {
+		wg.Wait()
+		close(semaphore)
+		fmt.Println("\n\033[01;34m[\033[01;31m      -- Finished --     \033[01;34m]\033[0m")
+	}()
 }
 
 func handleGoodConnection(ip, user, pass string, output []byte, port string) {
@@ -293,7 +295,6 @@ func printBanner() {
 	fmt.Println("\033[01;34m╚══════════════════════════════════════════════════╝")
 }
 
-// AdjustThreads adjusts the number of threads based on system capabilities and limits
 func AdjustThreads(desiredThreads int) int {
 	maxThreads := runtime.NumCPU() * 2 // Use a multiple of the available CPU cores as a maximum
 
