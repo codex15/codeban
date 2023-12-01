@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -290,6 +291,19 @@ func printBanner() {
 	fmt.Println("\033[01;34m╚══════════════════════════════════════════════════╝")
 }
 
+// AdjustThreads adjusts the number of threads based on system capabilities and limits
+func AdjustThreads(desiredThreads int) int {
+	maxThreads := runtime.NumCPU() * 2 // Use a multiple of the available CPU cores as a maximum
+
+	if desiredThreads <= 0 {
+		return 1 // Ensure at least one thread
+	} else if desiredThreads > maxThreads {
+		return maxThreads
+	}
+
+	return desiredThreads
+}
+
 func handleError(err error) {
 	errorMessage := fmt.Sprintf("\n\t\t\033[31mC O\033[33m D E \033[096mB A N\033[0m\n\n\033[01;34m[ \033[01;31m-\033[01;34m ] \033[01;31mError \033[0m- %s\n", err)
 	color.Cyan(errorMessage)
@@ -321,6 +335,9 @@ func main() {
 		handleError(NewCustomError("Invalid thread count"))
 		os.Exit(1)
 	}
+
+	// Adjust the number of threads
+	adjustedThreads := AdjustThreads(threads)
 	// Parse the IP segment provided with the -S option
 	if ipSegmentFlag.CIDR != "" {
 		_, ipNet, err := net.ParseCIDR(ipSegmentFlag.CIDR)
@@ -331,5 +348,5 @@ func main() {
 		allowedIPRange = ipNet
 	}
 
-	checkVPS(userpassFile, command, ipListFile, portFlag.Ports, threads)
+	checkVPS(userpassFile, command, ipListFile, portFlag.Ports, adjustedThreads)
 }
