@@ -298,6 +298,10 @@ func main() {
 	usage := "Usage: ./brute <userpass file> <custom command> <ip list file> <threads> [-S <IP segment>] [-P <ports file>]"
 
 	// Parse command line arguments
+	flag.Var(&ipSegmentFlag, "S", "IP segment in CIDR notation (e.g., 192.168.0.1/24)")
+	flag.Var(&portFlag, "P", "Ports file containing newline-separated port numbers")
+
+	// Parse the remaining arguments
 	flag.Parse()
 
 	// Check if the number of arguments is correct
@@ -315,7 +319,6 @@ func main() {
 		handleError(NewCustomError("Invalid thread count"))
 		os.Exit(1)
 	}
-
 	// Parse the IP segment provided with the -S option
 	if ipSegmentFlag.CIDR != "" {
 		// Use ipSegmentFlag.CIDR directly
@@ -327,6 +330,5 @@ func main() {
 		allowedIPRange = ipNet
 	}
 
-	// Perform the VPS check with the specified parameters
 	checkVPS(userpassFile, command, ipListFile, portFlag.Ports, threads)
 }
