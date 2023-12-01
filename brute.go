@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"strconv"
@@ -26,7 +27,6 @@ var (
 type connectionStatus struct {
 	Good bool
 	Bad  bool
-	// Add more status fields if needed
 }
 
 const (
@@ -45,7 +45,6 @@ func NewCustomError(message string) *CustomError {
 	return &CustomError{Message: message}
 }
 
-// CIDRFlag is a custom type to hold CIDR notation for IP filtering
 type CIDRFlag struct {
 	CIDR string
 }
@@ -126,7 +125,6 @@ func isNoLogin(err error) bool {
 		if strings.Contains(err.Error(), "permission denied") {
 			return true
 		}
-		// Add other checks based on expected behavior
 	}
 	return false
 }
@@ -134,10 +132,18 @@ func isNoLogin(err error) bool {
 func checkConnectionForIP(user, pass, command, ip, port string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
+	logFile, err := os.OpenFile("debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Println("Error opening log file:", err)
+		return
+	}
+	defer logFile.Close()
+	log.SetOutput(logFile)
+
 	if allowedIPRange != nil {
 		ipAddr := net.ParseIP(ip)
 		if ipAddr == nil || !allowedIPRange.Contains(ipAddr) {
-			// Skip IP if it's not valid or not in the allowed range
+			log.Println("Skipping IP:", ip)
 			return
 		}
 	}
@@ -147,7 +153,7 @@ func checkConnectionForIP(user, pass, command, ip, port string, wg *sync.WaitGro
 		if isNoLogin(err) {
 			handleNoLogin(ip, user, pass, port)
 		} else {
-			// Ignore other errors
+			log.Println("Error creating SSH session:", err)
 			return
 		}
 	}
@@ -163,7 +169,7 @@ func checkConnectionForIP(user, pass, command, ip, port string, wg *sync.WaitGro
 		if isNoLogin(err) {
 			handleNoLogin(ip, user, pass, port)
 		} else {
-			// Ignore other errors
+			log.Println("Error executing command:", err)
 			return
 		}
 		return
@@ -207,13 +213,11 @@ func checkVPS(userpassFile, command, ipListFile string, ports []string, threads 
 				ip := scannerIP.Text()
 
 				for _, port := range ports {
-					// Acquire semaphore
 					semaphore <- struct{}{}
 					wg.Add(1)
 					go func(user, pass, command, ip, port string, wg *sync.WaitGroup) {
 						defer wg.Done()
 						checkConnectionForIP(user, pass, command, ip, port, wg)
-						// Release semaphore
 						<-semaphore
 					}(user, pass, command, ip, port, &wg)
 				}
@@ -224,10 +228,8 @@ func checkVPS(userpassFile, command, ipListFile string, ports []string, threads 
 		}
 	}
 
-	// Wait for all goroutines to finish
 	wg.Wait()
 
-	// Display the colored completion message
 	fmt.Println("\n\033[01;34m[\033[01;31m      -- Finished --     \033[01;34m]\033[0m")
 }
 
@@ -321,7 +323,6 @@ func main() {
 	}
 	// Parse the IP segment provided with the -S option
 	if ipSegmentFlag.CIDR != "" {
-		// Use ipSegmentFlag.CIDR directly
 		_, ipNet, err := net.ParseCIDR(ipSegmentFlag.CIDR)
 		if err != nil {
 			handleError(NewCustomError("Invalid IP segment format"))
