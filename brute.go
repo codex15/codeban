@@ -176,9 +176,6 @@ func checkVPS(userpassFile, command, ipListFile, port string, threads int) {
 				ip := scannerIP.Text()
 				ipBatch = append(ipBatch, ip)
 
-				// Print user and pass combination
-				fmt.Printf("[ %s ] - [ %s ]\n", user, pass)
-
 				// When the batch size is reached, process the batch concurrently
 				if len(ipBatch) == threads {
 					processIPBatch(user, pass, command, port, ipBatch, semaphore)
