@@ -187,6 +187,7 @@ func checkVPS(userpassFile, command, ipListFile string, ports []string, threads 
 
 	scanner := bufio.NewScanner(upf)
 	for scanner.Scan() {
+		var wg sync.WaitGroup // Create a new WaitGroup for each iteration
 		userPass := scanner.Text()
 		parts := strings.SplitN(userPass, ":", 2)
 		if len(parts) == 2 {
@@ -222,10 +223,10 @@ func checkVPS(userpassFile, command, ipListFile string, ports []string, threads 
 			warningMessage := fmt.Sprintf("Warn - Invalid user:pass format: %s\n", userPass)
 			color.Cyan(warningMessage)
 		}
-	}
 
-	// Wait for all goroutines to finish
-	wg.Wait()
+		// Wait for all goroutines to finish before moving to the next user
+		wg.Wait()
+	}
 
 	// Display the colored completion message
 	fmt.Println("\n\033[01;34m[\033[01;31m      -- Finished --     \033[01;34m]\033[0m")
