@@ -131,7 +131,7 @@ func isNoLogin(err error) bool {
 	return false
 }
 
-func checkConnectionForIP(user, pass, command, ip, port string) {
+func checkConnectionForIP(user, pass, command, ip, port string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	if allowedIPRange != nil {
@@ -187,7 +187,6 @@ func checkVPS(userpassFile, command, ipListFile string, ports []string, threads 
 
 	scanner := bufio.NewScanner(upf)
 	for scanner.Scan() {
-		var wg sync.WaitGroup // Create a new WaitGroup for each iteration
 		userPass := scanner.Text()
 		parts := strings.SplitN(userPass, ":", 2)
 		if len(parts) == 2 {
@@ -211,22 +210,22 @@ func checkVPS(userpassFile, command, ipListFile string, ports []string, threads 
 					// Acquire semaphore
 					semaphore <- struct{}{}
 					wg.Add(1)
-					go func(user, pass, command, ip, port string) {
+					go func(user, pass, command, ip, port string, wg *sync.WaitGroup) {
 						defer wg.Done()
-						checkConnectionForIP(user, pass, command, ip, port)
+						checkConnectionForIP(user, pass, command, ip, port, wg)
 						// Release semaphore
 						<-semaphore
-					}(user, pass, command, ip, port)
+					}(user, pass, command, ip, port, &wg)
 				}
 			}
 		} else {
 			warningMessage := fmt.Sprintf("Warn - Invalid user:pass format: %s\n", userPass)
 			color.Cyan(warningMessage)
 		}
-
-		// Wait for all goroutines to finish before moving to the next user
-		wg.Wait()
 	}
+
+	// Wait for all goroutines to finish
+	wg.Wait()
 
 	// Display the colored completion message
 	fmt.Println("\n\033[01;34m[\033[01;31m      -- Finished --     \033[01;34m]\033[0m")
@@ -299,8 +298,6 @@ func main() {
 	usage := "Usage: ./brute <userpass file> <custom command> <ip list file> <threads> [-S <IP segment>] [-P <ports file>]"
 
 	// Parse command line arguments
-	flag.StringVar(&ipSegmentFlag.CIDR, "S", "", "IP segment in CIDR notation (optional)")
-	flag.Var(&portFlag, "P", "File containing ports or a single port (optional)")
 	flag.Parse()
 
 	// Check if the number of arguments is correct
@@ -328,11 +325,6 @@ func main() {
 			os.Exit(1)
 		}
 		allowedIPRange = ipNet
-	}
-
-	// If -P flag is not provided, use a default port or allow setting it from cmdline
-	if portFlag.PortsFile == "" {
-		portFlag.Ports = []string{"22"} // Default port is 22, change as needed
 	}
 
 	// Perform the VPS check with the specified parameters
