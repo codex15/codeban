@@ -20,6 +20,7 @@ var (
 	ipUserPairsMu  sync.Mutex
 	wg             sync.WaitGroup
 	allowedIPRange *net.IPNet
+	semaphore      chan struct{}
 )
 
 type connectionStatus struct {
@@ -148,7 +149,7 @@ func checkVPS(userpassFile, command, ipListFile, port string, threads int) {
 	}
 	defer upf.Close()
 
-	semaphore := make(chan struct{}, threads)
+	semaphore = make(chan struct{}, threads)
 
 	printBanner()
 	fmt.Printf("\n\n\033[01;34m[\033[01;31m▶\033[01;34m] \033[01;34mBrute Started\033[0m\n\n")
@@ -179,9 +180,11 @@ func checkVPS(userpassFile, command, ipListFile, port string, threads int) {
 				wg.Add(1)
 				go func(user, pass, command, ip, port string) {
 					defer wg.Done()
+					defer func() {
+						// Release semaphore
+						<-semaphore
+					}()
 					checkConnectionForIP(user, pass, command, ip, port)
-					// Release semaphore
-					<-semaphore
 				}(user, pass, command, ip, port)
 			}
 		} else {
