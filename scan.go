@@ -1,14 +1,16 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -18,58 +20,71 @@ var (
 
 	liveIPsMu sync.Mutex
 	liveIPs   []string
+
+	numThreads = 10 // Default number of threads
 )
 
-func init() {
-    printBanner()
-	flag.StringVar(&targetFlag, "target", "", "Specify target IP range (e.g., 192.168.1.1-20)")
-	flag.IntVar(&portFlag, "port", 80, "Specify target port for scanning")
-	flag.StringVar(&outputFlag, "output", "live_ips.txt", "Specify the output file for live IPs")
-}
-func printBanner() {
-	fmt.Println("\033[01;34m╔══════════════════════════════════════════════════╗")
-	fmt.Println("\033[01;34m║\033[01;31m                  C O D E B A N                   \033[01;34m║")
-	fmt.Println("\033[01;34m╚══════════════════════════════════════════════════╝")
-}
-
 func main() {
-	flag.Parse()
-
-	if targetFlag == "" {
-		fmt.Println("Please specify a target IP range using the -target flag.")
+	if len(os.Args) < 5 {
+		printUsage()
 		os.Exit(1)
 	}
-           printBanner()
-	fmt.Println("Scanning in progress: [=>                  ] 0% Complete (Approx. calculating)  Live IPs: 0")
+
+	targetFlag = os.Args[1]
+	portFlag = parseInt(os.Args[2])
+	outputFlag = os.Args[3]
+	numThreads = parseInt(os.Args[4])
+
+	if targetFlag == "" {
+		fmt.Println("Please specify a target IP range.")
+		os.Exit(1)
+	}
+
+	printBanner()
+	fmt.Printf("Scanning in progress for target %s on port %d with %d threads...\n", targetFlag, portFlag, numThreads)
 
 	targetIPs, err := expandIPRange(targetFlag)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	var wg sync.WaitGroup
+	var g errgroup.Group
 
+	ipChan := make(chan string, numThreads)
+
+	// Create a ProgressBar
 	progressBar := NewProgressBar(len(targetIPs))
 
-	for _, ip := range targetIPs {
-		wg.Add(1)
-		go func(ip string) {
-			defer wg.Done()
-			if scanPort(ip, portFlag) {
-				liveIPsMu.Lock()
-				liveIPs = append(liveIPs, ip)
-				liveIPsMu.Unlock()
-			}
-
-			progressBar.Increment()
-		}(ip)
+	for i := 0; i < numThreads; i++ {
+		g.Go(func() error {
+			return scanWorker(ipChan, portFlag, progressBar)
+		})
 	}
 
-	wg.Wait()
+	go func() {
+		for _, ip := range targetIPs {
+			ipChan <- ip
+		}
+		close(ipChan)
+	}()
+
+	if err := g.Wait(); err != nil {
+		log.Fatal(err)
+	}
 
 	saveLiveIPs(outputFlag)
 
-	fmt.Println("\n[INFO] Live IPs saved to", outputFlag)
+	fmt.Printf("\n[INFO] Live IPs saved to %s\n", outputFlag)
+}
+
+func printUsage() {
+	fmt.Println("Usage: ./scan <target> <port> <output> <threads>")
+}
+
+func printBanner() {
+	fmt.Println("╔══════════════════════════════════════════════════╗")
+	fmt.Println("║                  C O D E B A N                   ║")
+	fmt.Println("╚══════════════════════════════════════════════════╝")
 }
 
 func expandIPRange(ipRange string) ([]string, error) {
@@ -155,4 +170,24 @@ func (p *ProgressBar) Increment() {
 func (p *ProgressBar) Print() {
 	progressPercentage := int(float64(p.Progress) / float64(p.Total) * 100)
 	fmt.Printf("\rScanning in progress: [%s] %d%% Complete  Live IPs: %d", strings.Repeat("=>", progressPercentage/2), progressPercentage, len(liveIPs))
+}
+
+func scanWorker(ipChan <-chan string, port int, progressBar *ProgressBar) error {
+	for ip := range ipChan {
+		if scanPort(ip, port) {
+			liveIPsMu.Lock()
+			liveIPs = append(liveIPs, ip)
+			liveIPsMu.Unlock()
+		}
+		progressBar.Increment()
+	}
+	return nil
+}
+
+func parseInt(s string) int {
+	val, err := strconv.Atoi(s)
+	if err != nil {
+		log.Fatalf("Error converting %s to int: %v", s, err)
+	}
+	return val
 }
